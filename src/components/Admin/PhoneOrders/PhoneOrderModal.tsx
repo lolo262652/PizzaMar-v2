@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { X, Phone, ShoppingCart, CreditCard, Send } from "lucide-react";
+import { X, Phone } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -35,7 +35,7 @@ interface PhoneOrderModalProps {
 type Topping = { id: string; name: string; price: number };
 
 interface CartItem {
-  id: string; // unique local id
+  id: string;
   productId: string;
   name: string;
   image?: string | null;
@@ -62,6 +62,9 @@ export default function PhoneOrderModal({
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentLink, setPaymentLink] = useState("");
+  const [orderStatus, setOrderStatus] = useState<string>("pending");
+  const [paymentStatus, setPaymentStatus] = useState<string>("pending");
+  const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
 
   const {
     products,
@@ -72,7 +75,6 @@ export default function PhoneOrderModal({
     loadToppings,
   } = useAdminStore();
 
-  // Customization modal state
   const [customizingProduct, setCustomizingProduct] = useState<any | null>(
     null
   );
@@ -95,6 +97,7 @@ export default function PhoneOrderModal({
     defaultValues: { title: "Domicile", street: "", city: "", postal_code: "" },
   });
 
+  // ---------------------- Load data ----------------------
   useEffect(() => {
     if (isOpen) {
       loadProducts();
@@ -102,6 +105,40 @@ export default function PhoneOrderModal({
       loadToppings();
     }
   }, [isOpen, loadProducts, loadCategories, loadToppings]);
+
+  // ---------------------- Sound effect ----------------------
+  const playSound = (url: string) => {
+    const audio = new Audio(url);
+    audio.play().catch((err) => console.error("Erreur son:", err));
+  };
+
+  // ---------------------- Realtime order listener ----------------------
+  useEffect(() => {
+    if (!currentOrderId) return;
+
+    const channel = supabase
+      .channel("orders-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
+        (payload) => {
+          const record = payload.record;
+          if (record.id === currentOrderId) {
+            setOrderStatus(record.status);
+            setPaymentStatus(record.payment_status);
+            toast.success(
+              `État de la commande mis à jour: ${record.status}, paiement: ${record.payment_status}`
+            );
+            playSound("/sounds/ding.mp3");
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentOrderId]);
 
   // ---------------------- Customer lookup & creation ----------------------
   const searchCustomerByPhone = async (phone: string) => {
@@ -157,6 +194,7 @@ export default function PhoneOrderModal({
       setExistingCustomer(result.user);
       setStep("address");
       toast.success("Client créé avec succès");
+      playSound("/sounds/ding.mp3");
     } catch (err: any) {
       console.error("Error creating customer:", err);
       toast.error(err?.message || "Erreur lors de la création du client");
@@ -248,6 +286,7 @@ export default function PhoneOrderModal({
 
     setCart((prev) => [...prev, item]);
     toast.success(`${product.name} ajouté au panier`);
+    playSound("/sounds/ding.mp3"); // Ding au ajout produit
   };
 
   const getTotalPrice = useMemo(
@@ -257,7 +296,6 @@ export default function PhoneOrderModal({
 
   // ---------------------- Customization flow ----------------------
   const openCustomize = (product: any) => {
-    // initialize toppings map (all false by default)
     const map: Record<string, boolean> = {};
     (toppings || []).forEach((t) => {
       map[t.id] = false;
@@ -319,6 +357,10 @@ export default function PhoneOrderModal({
 
       if (orderError) throw orderError;
 
+      setCurrentOrderId(order.id);
+      setOrderStatus(order.status);
+      setPaymentStatus(order.payment_status);
+
       const orderItems = cart.map((item) => ({
         order_id: order.id,
         product_id: item.productId,
@@ -350,6 +392,7 @@ export default function PhoneOrderModal({
 
       setStep("payment");
       toast.success("Commande créée et lien de paiement généré");
+      playSound("/sounds/ding.mp3"); // Ding création commande
     } catch (err) {
       console.error("Error creating order:", err);
       toast.error("Erreur lors de la création de la commande");
@@ -361,6 +404,7 @@ export default function PhoneOrderModal({
   const sendPaymentLink = async () => {
     if (!paymentLink || !existingCustomer) return;
     toast.success(`Lien de paiement envoyé au ${existingCustomer.phone}`);
+    playSound("/sounds/ding.mp3"); // Ding paiement
     setTimeout(() => {
       onClose();
       resetModal();
@@ -374,12 +418,16 @@ export default function PhoneOrderModal({
     setSelectedAddress(null);
     setCart([]);
     setPaymentLink("");
+    setOrderStatus("pending");
+    setPaymentStatus("pending");
+    setCurrentOrderId(null);
     phoneForm.reset();
     customerForm.reset();
     addressForm.reset();
     setCustomizingProduct(null);
   };
 
+  // ---------------------- Render ----------------------
   if (!isOpen) return null;
 
   return (
@@ -577,6 +625,8 @@ export default function PhoneOrderModal({
               {cart.length > 0 && (
                 <div className="bg-gray-50 rounded-lg p-4 mb-4">
                   <h4 className="font-medium mb-2">Panier actuel :</h4>
+
+                  {/* Liste des articles */}
                   {cart.map((item) => (
                     <div
                       key={item.id}
@@ -612,6 +662,22 @@ export default function PhoneOrderModal({
                       </div>
                     </div>
                   ))}
+
+                  {/* Récap total */}
+                  <div className="mt-4 space-y-1">
+                    <div className="flex justify-between font-semibold">
+                      <span>Total produits :</span>
+                      <span>{getTotalPrice().toFixed(2)} €</span>
+                    </div>
+                    <div className="flex justify-between font-semibold">
+                      <span>Livraison :</span>
+                      <span>3.50 €</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-lg border-t pt-2">
+                      <span>Total à payer :</span>
+                      <span>{(getTotalPrice() + 3.5).toFixed(2)} €</span>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -695,6 +761,7 @@ export default function PhoneOrderModal({
               >
                 {paymentLink}
               </a>
+
               <button
                 onClick={sendPaymentLink}
                 className="mt-4 bg-red-600 text-white px-6 py-2 rounded hover:bg-red-700"

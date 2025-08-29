@@ -97,58 +97,83 @@ export const useOrderStore = create<OrderState>((set, get) => ({
   },
 
   /** Créer une commande */
-  createOrder: async (orderData) => {
-    try {
-      const { data: userResult, error: userError } = await supabase.auth.getUser();
-      if (userError || !userResult?.user) {
-        return { error: "Utilisateur non connecté" };
-      }
+ /** Créer une commande */
+createOrder: async (orderData) => {
+  try {
+    // Récupérer l'utilisateur connecté
+    const { data: userResult, error: userError } = await supabase.auth.getUser();
+    if (userError || !userResult?.user) {
+      return { error: "Utilisateur non connecté" };
+    }
+    const userId = userResult.user.id;
 
-      const userId = userResult.user.id;
+    // 1️⃣ Création de la commande
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .insert({
+        user_id: userId,
+        address_id: orderData.addressId,
+        total_amount: orderData.totalAmount,
+        status: "pending",
+        payment_status: "pending",
+        notes: orderData.notes || null,
+      })
+      .select()
+      .single();
 
-      // 1️⃣ Création de la commande
-      const { data: order, error: orderError } = await supabase
-        .from("orders")
-        .insert({
-          user_id: userId,
-          address_id: orderData.addressId,
-          total_amount: orderData.totalAmount,
-          status: "pending",
-          payment_status: "pending",
-          notes: orderData.notes || null,
-        })
-        .select()
+    if (orderError) throw orderError;
+
+    // 2️⃣ Préparer le payload des articles
+    const orderItemsPayload = [];
+    for (const item of orderData.items) {
+      // Vérifier que le produit existe
+      const { data: productExists, error: prodError } = await supabase
+        .from("products")
+        .select("id")
+        .eq("id", item.productId)
         .single();
 
-      if (orderError) throw orderError;
+      if (prodError || !productExists) {
+        console.warn("Produit non trouvé, skip :", item.productId);
+        continue; // ignorer ce produit
+      }
 
-      // 2️⃣ Ajout des articles
-      const orderItemsPayload = orderData.items.map((item) => ({
+      orderItemsPayload.push({
         order_id: order.id,
         product_id: item.productId,
         quantity: item.quantity,
         unit_price: item.unitPrice,
         total_price: item.totalPrice,
-        selected_toppings: item.selectedToppings,
+        selected_toppings: JSON.stringify(item.selectedToppings), // JSON
         size: item.size || null,
         crust: item.crust || null,
-      }));
-
-      const { error: itemsError } = await supabase
-        .from("order_items")
-        .insert(orderItemsPayload);
-
-      if (itemsError) throw itemsError;
-
-      toast.success("Commande créée avec succès");
-      return { orderId: order.id };
-    } catch (err: any) {
-      console.error("Erreur createOrder:", err);
-      const errorMessage = err.message || "Erreur lors de la création de la commande";
-      toast.error(errorMessage);
-      return { error: errorMessage };
+      });
     }
-  },
+
+    if (orderItemsPayload.length === 0) {
+      return { error: "Aucun article valide à insérer" };
+    }
+
+    // 3️⃣ Insérer les articles dans order_items
+    const { data: insertedItems, error: itemsError } = await supabase
+      .from("order_items")
+      .insert(orderItemsPayload)
+      .select("*"); // récupère les articles insérés
+
+    if (itemsError) throw itemsError;
+
+    console.log("Articles insérés :", insertedItems);
+
+    toast.success("Commande créée avec succès ✅");
+    return { orderId: order.id };
+  } catch (err: any) {
+    console.error("Erreur createOrder:", err);
+    const errorMessage = err.message || "Erreur lors de la création de la commande";
+    toast.error(errorMessage);
+    return { error: errorMessage };
+  }
+},
+
 
   /** Mettre à jour le statut de commande */
   updateOrderStatus: async (orderId, status) => {
