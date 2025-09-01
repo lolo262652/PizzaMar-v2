@@ -111,6 +111,12 @@ export default function PhoneOrderModal({
     const audio = new Audio(url);
     audio.play().catch((err) => console.error("Erreur son:", err));
   };
+  // ---------------------- Remove from cart ----------------------
+  const removeFromCart = (itemId: string) => {
+    setCart((prev) => prev.filter((item) => item.id !== itemId));
+    toast.success("Produit supprimé du panier");
+    playSound("/sounds/ding.mp3"); // Son suppression
+  };
 
   // ---------------------- Realtime order listener ----------------------
   useEffect(() => {
@@ -657,12 +663,20 @@ export default function PhoneOrderModal({
                           )}
                         </div>
                       </div>
-                      <div className="font-semibold">
-                        {item.totalPrice.toFixed(2)} €
+                      <div className="flex items-center space-x-2">
+                        <div className="font-semibold">
+                          {item.totalPrice.toFixed(2)} €
+                        </div>
+                        <button
+                          onClick={() => removeFromCart(item.id)}
+                          className="text-red-600 hover:text-red-800"
+                          title="Supprimer du panier"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
                       </div>
                     </div>
                   ))}
-
                   {/* Récap total */}
                   <div className="mt-4 space-y-1">
                     <div className="flex justify-between font-semibold">
