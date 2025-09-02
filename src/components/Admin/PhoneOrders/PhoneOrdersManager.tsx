@@ -10,6 +10,8 @@ import {
   X,
   Edit,
   Trash2,
+  Store,
+  Truck,
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 import PhoneOrderModal from "./PhoneOrderModal";
@@ -22,6 +24,7 @@ interface PhoneOrder {
   status: string;
   payment_status: string;
   created_at: string;
+  delivery_method: "delivery" | "pickup"; // ✅ ajouté
   users: {
     full_name: string;
     phone: string;
@@ -32,7 +35,7 @@ interface PhoneOrder {
     street: string;
     city: string;
     postal_code: string;
-  };
+  } | null;
   order_items: Array<{
     quantity: number;
     products: {
@@ -135,6 +138,7 @@ export default function PhoneOrdersManager() {
           status: editData.status,
           payment_status: editData.payment_status,
           total_amount: editData.total_amount,
+          delivery_method: editData.delivery_method,
         })
         .eq("id", editingId);
 
@@ -404,8 +408,13 @@ export default function PhoneOrdersManager() {
                     </td>
 
                     {/* Adresse */}
+                    {/* Adresse / Retrait */}
                     <td className="px-4 py-2 whitespace-nowrap max-w-xs">
-                      {isEditing ? (
+                      {order.delivery_method === "pickup" ? (
+                        <div className="flex items-center text-green-600">
+                          <Store className="w-4 h-4 mr-1" /> Retrait magasin
+                        </div>
+                      ) : isEditing ? (
                         <div className="flex flex-col space-y-1">
                           <input
                             type="text"
@@ -447,16 +456,16 @@ export default function PhoneOrdersManager() {
                       ) : (
                         <>
                           <div className="text-sm text-gray-400">
-                            {order.addresses.title}
+                            {order.addresses?.title}
                           </div>
                           <div className="text-sm text-gray-400">
-                            {order.addresses.street}
+                            {order.addresses?.street}
                           </div>
                           <div className="text-sm text-gray-400">
-                            {order.addresses.city}
+                            {order.addresses?.city}
                           </div>
                           <div className="text-sm text-gray-400">
-                            {order.addresses.postal_code}
+                            {order.addresses?.postal_code}
                           </div>
                         </>
                       )}

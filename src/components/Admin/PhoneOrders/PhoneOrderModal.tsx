@@ -30,8 +30,8 @@ type AddressForm = z.infer<typeof addressSchema>;
 interface PhoneOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOrderCreated?: (order: PhoneOrder) => void;
 }
-
 type Topping = { id: string; name: string; price: number };
 
 interface CartItem {
@@ -117,6 +117,10 @@ export default function PhoneOrderModal({
     toast.success("Produit supprimé du panier");
     playSound("/sounds/ding.mp3"); // Son suppression
   };
+
+  const [deliveryMethod, setDeliveryMethod] = useState<"delivery" | "pickup">(
+    "delivery"
+  );
 
   // ---------------------- Realtime order listener ----------------------
   useEffect(() => {
@@ -339,24 +343,35 @@ export default function PhoneOrderModal({
 
   // ---------------------- Order creation ----------------------
   const createOrderAndPaymentLink = async () => {
-    if (!existingCustomer || !selectedAddress || cart.length === 0) {
-      toast.error("Vérifiez le client, l'adresse et le panier");
+    if (!existingCustomer || cart.length === 0) {
+      toast.error("Vérifiez le client et le panier");
+      return;
+    }
+
+    if (deliveryMethod === "delivery" && !selectedAddress) {
+      toast.error("Veuillez sélectionner une adresse de livraison");
       return;
     }
 
     setIsProcessing(true);
     try {
-      const totalAmount = getTotalPrice() + 3.5;
+      const totalAmount =
+        getTotalPrice() + (deliveryMethod === "delivery" ? 3.5 : 0);
 
       const { data: order, error: orderError } = await supabase
         .from("orders")
         .insert({
           user_id: existingCustomer.id,
-          address_id: selectedAddress.id,
+          address_id:
+            deliveryMethod === "delivery" ? selectedAddress?.id : null,
           total_amount: totalAmount,
           status: "pending",
           payment_status: "pending",
-          notes: "Commande téléphonique",
+          notes:
+            deliveryMethod === "pickup"
+              ? "Commande avec retrait en magasin"
+              : "Commande téléphonique",
+          delivery_method: deliveryMethod, // 👈 ajoute un champ dans ta table orders
         })
         .select()
         .single();
@@ -409,12 +424,47 @@ export default function PhoneOrderModal({
 
   const sendPaymentLink = async () => {
     if (!paymentLink || !existingCustomer) return;
-    toast.success(`Lien de paiement envoyé au ${existingCustomer.phone}`);
-    playSound("/sounds/ding.mp3"); // Ding paiement
-    setTimeout(() => {
-      onClose();
-      resetModal();
-    }, 1000);
+
+    try {
+      // Préparer les données pour l'API Brevo Transactional SMS
+      const smsData = {
+        sender: "Company", // ⚠️ doit être validé chez Brevo sinon remplacé
+        recipient: existingCustomer.phone, // Numéro au format international (+216...)
+        content: `Bonjour, voici votre lien de paiement : ${paymentLink}`,
+        type: "transactional", // Obligatoire pour éviter l’envoi en campagne
+        tag: "payment-link", // Optionnel, utile pour le suivi
+      };
+
+      // Appel API Brevo Transactional SMS
+      const response = await fetch(
+        "https://api.brevo.com/v3/transactionalSMS/sms",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "api-key": import.meta.env.VITE_API_BREVO_SMS, // même clé API que pour email
+          },
+          body: JSON.stringify(smsData),
+        }
+      );
+
+      const result = await response.json();
+
+      if (response.ok) {
+        toast.success(`Lien de paiement envoyé au ${existingCustomer.phone}`);
+        playSound("/sounds/ding.mp3"); // Ding paiement
+        setTimeout(() => {
+          onClose();
+          resetModal();
+        }, 1000);
+      } else {
+        toast.error(`Erreur envoi SMS: ${result.message || "Réessayez."}`);
+        console.error("Brevo SMS error:", result);
+      }
+    } catch (error) {
+      console.error("Erreur envoi SMS:", error);
+      toast.error("Impossible d'envoyer le SMS.");
+    }
   };
 
   const resetModal = () => {
@@ -554,63 +604,95 @@ export default function PhoneOrderModal({
           {/* --- ADDRESS --- */}
           {step === "address" && (
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold">Adresse de livraison</h3>
-              {customerAddresses.length > 0 && (
-                <div className="mb-4">
-                  <h4 className="font-medium mb-2">Adresses existantes :</h4>
-                  {customerAddresses.map((addr) => (
-                    <button
-                      key={addr.id}
-                      onClick={() => {
-                        setSelectedAddress(addr);
-                        setStep("products");
-                      }}
-                      className="block w-full text-left p-3 border rounded-lg mb-2"
-                    >
-                      <div className="font-medium">{addr.title}</div>
-                      <div className="text-sm text-gray-600">
-                        {addr.title}, {addr.street}, {addr.city},{" "}
-                        {addr.postal_code}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <form
-                onSubmit={addressForm.handleSubmit(createAddress)}
-                className="space-y-4"
-              >
-                <h4 className="font-medium">Nouvelle adresse :</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <input
-                    {...addressForm.register("title")}
-                    placeholder="Titre (Domicile, Bureau...)"
-                    className="px-4 py-2 border rounded-lg"
-                  />
-                  <input
-                    {...addressForm.register("postal_code")}
-                    placeholder="Code postal"
-                    className="px-4 py-2 border rounded-lg"
-                  />
-                </div>
-                <input
-                  {...addressForm.register("street")}
-                  placeholder="Adresse complète"
-                  className="w-full px-4 py-2 border rounded-lg"
-                />
-                <input
-                  {...addressForm.register("city")}
-                  placeholder="Ville"
-                  className="w-full px-4 py-2 border rounded-lg"
-                />
+              <h3 className="text-lg font-semibold">Mode de livraison</h3>
+              <div className="flex space-x-4">
                 <button
-                  type="submit"
-                  className="w-full bg-red-600 text-white py-2 rounded-lg"
+                  onClick={() => setDeliveryMethod("delivery")}
+                  className={`px-4 py-2 rounded-lg border ${
+                    deliveryMethod === "delivery"
+                      ? "bg-red-600 text-white"
+                      : "bg-gray-100 text-gray-700"
+                  }`}
                 >
-                  Ajouter l'adresse
+                  Livraison à domicile
                 </button>
-              </form>
+                <button
+                  onClick={() => {
+                    setDeliveryMethod("pickup");
+                    setSelectedAddress(null); // pas besoin d’adresse
+                    setStep("products");
+                  }}
+                  className={`px-4 py-2 rounded-lg border ${
+                    deliveryMethod === "pickup"
+                      ? "bg-red-600 text-white"
+                      : "bg-gray-100 text-gray-700"
+                  }`}
+                >
+                  Retrait en magasin
+                </button>
+              </div>
+
+              {deliveryMethod === "delivery" && (
+                <>
+                  {customerAddresses.length > 0 && (
+                    <div className="mb-4">
+                      <h4 className="font-medium mb-2">
+                        Adresses existantes :
+                      </h4>
+                      {customerAddresses.map((addr) => (
+                        <button
+                          key={addr.id}
+                          onClick={() => {
+                            setSelectedAddress(addr);
+                            setStep("products");
+                          }}
+                          className="block w-full text-left p-3 border rounded-lg mb-2"
+                        >
+                          <div className="font-medium">{addr.title}</div>
+                          <div className="text-sm text-gray-600">
+                            {addr.street}, {addr.city}, {addr.postal_code}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <form
+                    onSubmit={addressForm.handleSubmit(createAddress)}
+                    className="space-y-4"
+                  >
+                    <h4 className="font-medium">Nouvelle adresse :</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      <input
+                        {...addressForm.register("title")}
+                        placeholder="Titre (Domicile, Bureau...)"
+                        className="px-4 py-2 border rounded-lg"
+                      />
+                      <input
+                        {...addressForm.register("postal_code")}
+                        placeholder="Code postal"
+                        className="px-4 py-2 border rounded-lg"
+                      />
+                    </div>
+                    <input
+                      {...addressForm.register("street")}
+                      placeholder="Adresse complète"
+                      className="w-full px-4 py-2 border rounded-lg"
+                    />
+                    <input
+                      {...addressForm.register("city")}
+                      placeholder="Ville"
+                      className="w-full px-4 py-2 border rounded-lg"
+                    />
+                    <button
+                      type="submit"
+                      className="w-full bg-red-600 text-white py-2 rounded-lg"
+                    >
+                      Ajouter l'adresse
+                    </button>
+                  </form>
+                </>
+              )}
             </div>
           )}
 
@@ -683,13 +765,21 @@ export default function PhoneOrderModal({
                       <span>Total produits :</span>
                       <span>{getTotalPrice().toFixed(2)} €</span>
                     </div>
-                    <div className="flex justify-between font-semibold">
-                      <span>Livraison :</span>
-                      <span>3.50 €</span>
-                    </div>
+                    {deliveryMethod === "delivery" && (
+                      <div className="flex justify-between font-semibold">
+                        <span>Livraison :</span>
+                        <span>3.50 €</span>
+                      </div>
+                    )}
                     <div className="flex justify-between font-bold text-lg border-t pt-2">
                       <span>Total à payer :</span>
-                      <span>{(getTotalPrice() + 3.5).toFixed(2)} €</span>
+                      <span>
+                        {(
+                          getTotalPrice() +
+                          (deliveryMethod === "delivery" ? 3.5 : 0)
+                        ).toFixed(2)}{" "}
+                        €
+                      </span>
                     </div>
                   </div>
                 </div>

@@ -33,8 +33,13 @@ async function sendBrevoEmail(to: any[], subject: string, htmlContent: string) {
   }
 }
 
-//  Mail client “pending” (avant paiement)
-async function sendClientPendingMail(order: any, clientEmail: string) {
+async function sendClientPendingMail(
+  order: any,
+  clientEmail: string,
+  stripeUrl: string
+) {
+  if (!clientEmail) return;
+
   const itemsHtml = order.order_items
     .map((it: any) => {
       const toppings = it.selected_toppings
@@ -42,27 +47,57 @@ async function sendClientPendingMail(order: any, clientEmail: string) {
         : "";
       const size = it.size ? ` — Taille : ${it.size}` : "";
       const crust = it.crust ? ` — Pâte : ${it.crust}` : "";
-      return `<li>${it.quantity}x ${
+      return `<tr>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${it.quantity}x ${
         it.products?.name
-      }${size}${crust}${toppings} — ${it.total_price.toFixed(2)}€</li>`;
+      }${size}${crust}${toppings}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">${it.total_price.toFixed(
+          2
+        )}€</td>
+      </tr>`;
     })
     .join("");
 
-  if (!clientEmail) return;
   const html = `
-    <h2>Commande #${order.id.slice(-8)} enregistrée</h2>
-    <p>Bonjour ${order.users.full_name},</p>
-    <p>Votre commande est en attente de paiement.</p>
-    <p>Total : ${order.total_amount} €</p>
-    <p> ${itemsHtml}</p>
-    
-    <p>${
-      order.delivery_method === "delivery"
-        ? `Adresse : ${order.addresses.street}, ${order.addresses.postal_code} ${order.addresses.city}`
-        : "Retrait en magasin"
-    }</p>
-    <p>Merci pour votre confiance,<br/>L’équipe PIZZAMar</p>
+  <div style="font-family: Arial, sans-serif; max-width:600px;margin:0 auto;color:#333;">
+    <div style="background-color:#FF3B30;padding:20px;text-align:center;color:white;">
+      <img src="https://i.ibb.co/6Xh0F6L/logo.png" alt="PIZZAMar" style="height:50px;margin-bottom:10px;">
+      <h1 style="margin:0;font-size:24px;">Commande #${order.id.slice(-8)}</h1>
+    </div>
+    <div style="padding:20px;background-color:#fff;border:1px solid #eee;">
+      <p>Bonjour <strong>${order.users.full_name}</strong>,</p>
+      <p>Votre commande est en attente de paiement.</p>
+      <table style="width:100%;border-collapse:collapse;margin:15px 0;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #eee;">Produit</th>
+            <th style="text-align:right;padding:8px;border-bottom:2px solid #eee;">Prix</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHtml}
+        </tbody>
+      </table>
+      <p><strong>Total :</strong> ${order.total_amount} €</p>
+      <p>${
+        order.delivery_method === "delivery"
+          ? `Adresse : ${order.addresses.street}, ${order.addresses.postal_code} ${order.addresses.city}`
+          : "Retrait en magasin"
+      }</p>
+      <p style="text-align:center;margin:30px 0;">
+        <a href="${stripeUrl}" target="_blank"
+           style="background-color:#FF3B30;color:white;padding:12px 25px;text-decoration:none;border-radius:5px;font-weight:bold;">
+          Payer maintenant
+        </a>
+      </p>
+      <p>Merci pour votre confiance,<br>L’équipe <strong>PIZZAMar</strong></p>
+    </div>
+    <div style="text-align:center;color:#888;font-size:12px;padding:10px;">
+      &copy; ${new Date().getFullYear()} PIZZAMar. Tous droits réservés.
+    </div>
+  </div>
   `;
+
   await sendBrevoEmail(
     [{ email: clientEmail, name: order.users.full_name }],
     `Confirmation de commande #${order.id.slice(-8)}`,
@@ -79,9 +114,14 @@ async function sendAdminPendingMail(order: any) {
         : "";
       const size = it.size ? ` — Taille : ${it.size}` : "";
       const crust = it.crust ? ` — Pâte : ${it.crust}` : "";
-      return `<li>${it.quantity}x ${
+      return `<tr>
+        <td style="padding:8px;border-bottom:1px solid #eee;">${it.quantity}x ${
         it.products?.name
-      }${size}${crust}${toppings} — ${it.total_price.toFixed(2)}€</li>`;
+      }${size}${crust}${toppings}</td>
+        <td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">${it.total_price.toFixed(
+          2
+        )}€</td>
+      </tr>`;
     })
     .join("");
 
@@ -89,16 +129,40 @@ async function sendAdminPendingMail(order: any) {
     order.delivery_method === "delivery" && order.addresses
       ? `Adresse : ${order.addresses.street}, ${order.addresses.postal_code} ${order.addresses.city}`
       : "Retrait en magasin";
+
   const html = `
-    <h2>Nouvelle commande #${order.id.slice(-8)}</h2>
-    <p>Client : ${order.users.full_name} (${order.users.email}, ${
-    order.users.phone
-  })</p>
-    <p>Méthode : ${order.delivery_method}</p>
-    <p>${addressText}</p>
-    <p><strong>Total :</strong> ${order.total_amount} €</p>
-    <ul>${itemsHtml}</ul>
+  <div style="font-family: Arial, sans-serif; max-width:600px;margin:0 auto;color:#333;">
+    <div style="background-color:#FF3B30;padding:20px;text-align:center;color:white;">
+      <img src="https://i.ibb.co/6Xh0F6L/logo.png" alt="PIZZAMar" style="height:50px;margin-bottom:10px;">
+      <h1 style="margin:0;font-size:24px;">Nouvelle commande #${order.id.slice(
+        -8
+      )}</h1>
+    </div>
+    <div style="padding:20px;background-color:#fff;border:1px solid #eee;">
+      <p><strong>Client :</strong> ${order.users.full_name}</p>
+      <p><strong>Email :</strong> ${order.users.email}</p>
+      <p><strong>Téléphone :</strong> ${order.users.phone}</p>
+      <p><strong>Méthode :</strong> ${order.delivery_method}</p>
+      <p>${addressText}</p>
+      <table style="width:100%;border-collapse:collapse;margin:15px 0;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:8px;border-bottom:2px solid #eee;">Produit</th>
+            <th style="text-align:right;padding:8px;border-bottom:2px solid #eee;">Prix</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${itemsHtml}
+        </tbody>
+      </table>
+      <p><strong>Total :</strong> ${order.total_amount} €</p>
+    </div>
+    <div style="text-align:center;color:#888;font-size:12px;padding:10px;">
+      &copy; ${new Date().getFullYear()} PIZZAMar. Tous droits réservés.
+    </div>
+  </div>
   `;
+
   await sendBrevoEmail(
     [{ email: ADMIN_EMAIL, name: "Admin" }],
     `Nouvelle commande #${order.id.slice(-8)}`,
@@ -144,10 +208,28 @@ export default function PaymentPage() {
       if (error || !data) throw new Error("Commande introuvable");
       setOrder(data);
 
-      //  Email “pending” si pas déjà envoyé
+      // Si mail pas encore envoyé
       if (data.status === "pending" && !data.confirmation_sent) {
-        await sendClientPendingMail(data, clientEmail);
+        // Créer session Stripe via ton endpoint
+        const res = await fetch(PAYMENT_FUNCTION_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: Number(data.total_amount),
+            orderId: data.id,
+          }),
+        });
+        const sessionData = await res.json();
+        if (!res.ok)
+          throw new Error(
+            sessionData.error || "Erreur création session Stripe"
+          );
+
+        // Envoyer mail client avec lien Stripe
+        await sendClientPendingMail(data, clientEmail, sessionData.url);
         await sendAdminPendingMail(data);
+
+        // Marquer mail envoyé
         await supabase
           .from("orders")
           .update({ confirmation_sent: true })
